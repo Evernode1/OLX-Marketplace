@@ -247,11 +247,15 @@ def _consensus_dispute(title: str, description: str, price: str, claim: str, res
 
 
 # ---------------------------------------------------------------------------
-# Native-token transfer used for every outgoing payment.
-# NOTE: verify this interface against the deployed SDK version before going live.
+# Native-token transfer used for every outgoing payment. Pattern from the GenLayer SDK v0.2.5 docs
+# (gl.evm.contract_interface + ContractProxy.emit_transfer(value=...)). The declaration class must
+# carry nested View and Write classes, because contract_interface reads both when it builds the proxy.
 # ---------------------------------------------------------------------------
 class _NativePayee:
-    def emit_transfer(self, value):
+    class View:
+        pass
+
+    class Write:
         pass
 
 
@@ -259,8 +263,9 @@ def _send(to: str, amount: int) -> None:
     if amount <= 0:
         return
     # Created on first use, not at import time, so the schema loader never runs it.
+    # The proxy takes an Address object, not a string.
     payee = gl.evm.contract_interface(_NativePayee)
-    payee(to).emit_transfer(value=amount)
+    payee(Address(to)).emit_transfer(value=u256(amount))
 
 
 # ---------------------------------------------------------------------------
@@ -1049,6 +1054,18 @@ class Marketplace(gl.Contract):
         self.rating_count[target] = u256(int(self.rating_count.get(target, u256(0))) + 1)
 
     # --------------------------------------------------------------- views
+    @gl.public.view
+    def get_contract_balance(self) -> dict:
+        # Native balance held by this contract (gl.Contract.balance). This is the escrow plus fees.
+        return {"balance": int(self.balance)}
+
+    @gl.public.view
+    def escrow_check(self) -> dict:
+        # Escrow invariant: the contract balance must equal unreleased escrow plus accrued fees.
+        expected = int(self.escrowed) + int(self.accrued_fees)
+        actual = int(self.balance)
+        return {"balance": actual, "expected": expected, "matches": actual == expected}
+
     @gl.public.view
     def get_config(self) -> dict:
         return {
